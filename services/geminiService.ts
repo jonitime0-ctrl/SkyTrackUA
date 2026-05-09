@@ -1,8 +1,8 @@
 
 import { GoogleGenAI } from "@google/genai";
 
-// Always use const ai = new GoogleGenAI({apiKey: process.env.API_KEY});
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Always use const ai = new GoogleGenAI({apiKey: process.env.GEMINI_API_KEY});
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 export const getTacticalBriefing = async (activeAirfields: string[]) => {
   try {
@@ -35,6 +35,7 @@ export const getHistoricalAnalysis = async () => {
     // Directly access the .text property from the response object.
     return response.text;
   } catch (error) {
+    console.error("Gemini Analysis Error:", error);
     return "Аналіз недоступний. Спостерігається стабільно висока інтенсивність запусків у нічний час.";
   }
 };

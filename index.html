@@ -4,7 +4,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SkyTrackUa - Моніторинг</title>
+    <meta name="theme-color" content="#0a0c10" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="apple-touch-icon" href="/icon.svg" />
+    <title>ПОВІТРЯНИЙ ПРОСТІР</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
     <script>
@@ -46,9 +50,20 @@
         z-index: 100;
         animation: snow linear infinite;
       }
+      @keyframes float {
+        0%, 100% { transform: translateY(0) scale(1); }
+        50% { transform: translateY(-10px) scale(1.05); }
+      }
+      .animate-float {
+        animation: float 4s ease-in-out infinite;
+      }
       body {
         transition: background-color 0.3s ease, color 0.3s ease;
         overflow-x: hidden;
+      }
+      .custom-icon-bg-transparent {
+        background: transparent !important;
+        border: none !important;
       }
     </style>
   <script type="importmap">
@@ -62,8 +77,10 @@
   }
 }
 </script>
+<link rel="stylesheet" href="/index.css">
 </head>
   <body class="bg-slate-50 text-slate-900 dark:bg-sky-dark dark:text-slate-100 min-h-screen">
     <div id="root"></div>
-  </body>
+  <script type="module" src="/index.tsx"></script>
+</body>
 </html>

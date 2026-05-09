@@ -10,4 +10,15 @@ export interface Airfield {
 
 export type Theme = 'light' | 'dark';
 
-export type BallisticDirection = 'North' | 'South' | 'East' | 'West' | 'None';
+export type BallisticDirection = string;
+
+export interface Channel {
+  id: string;
+  name: string;
+  avatarUrl?: string;
+  adminId: string;
+  members: string[]; // User IDs
+  writeAccess: 'admin_only' | 'all_members';
+  passcode?: string; // 4 digits
+  createdAt: any;
+}

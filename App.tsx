@@ -1,211 +1,405 @@
+import React, { useState, useEffect, Component, ErrorInfo, ReactNode, useMemo, useCallback } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { Theme } from './types';
+import { auth, db } from './firebase';
+import { onAuthStateChanged } from 'firebase/auth';
+import { doc, getDoc, collection, query, orderBy, limit, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
+import { motion, AnimatePresence } from 'motion/react';
+import { AlertTriangle, Radar, Info, Target } from 'lucide-react';
+import { AIRFIELDS } from './constants';
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { 
-  Radar, ShieldAlert, Map as MapIcon, Target, 
-  ShieldCheck, Trash2, LayoutDashboard, Database,
-  Zap, AlertTriangle, Lock, Unlock, CheckCircle, Info, ChevronRight
-} from 'lucide-react';
-import { AIRFIELDS, INITIAL_HISTORICAL_STATS, GLOBAL_SUMMARY } from './constants';
-import { Theme, BallisticDirection } from './types';
-import { AirfieldCard } from './components/AirfieldCard';
-import { KyivClock } from './components/KyivClock';
-import { ThemeToggle } from './components/ThemeToggle';
-import { getTacticalBriefing } from './services/geminiService';
+import { AuthPage } from './pages/AuthPage';
+import { Layout } from './components/Layout';
+import { Dashboard } from './pages/Dashboard';
+import { Profile } from './pages/Profile';
+import { Community } from './pages/Community';
+import { Search } from './pages/Search';
+import { Event } from './pages/Event';
+import { Notifications } from './pages/Notifications';
+import { Settings } from './pages/Settings';
+import { ChannelView } from './pages/ChannelView';
+import { AdminPanel } from './pages/AdminPanel';
+import { SectionBlocker } from './components/SectionBlocker';
+import { Chat } from './pages/Chat';
+import { CaptchaScreen } from './components/CaptchaScreen';
+import { AuthLockScreen } from './components/AuthLockScreen';
+import { UpdateNotifier } from './components/UpdateNotifier';
+import { SunsetScreen } from './components/SunsetScreen';
+import { StorePage } from './pages/Store';
 
-const Snowfall: React.FC = () => {
-  const snowflakes = useMemo(() => 
-    Array.from({ length: 40 }).map((_, i) => ({
-      id: i,
-      left: `${Math.random() * 100}%`,
-      duration: `${Math.random() * 10 + 5}s`,
-      delay: `${Math.random() * 5}s`,
-      size: `${Math.random() * 4 + 2}px`,
-      opacity: Math.random() * 0.6 + 0.2
-    })), []);
+import { AIPage } from './pages/AIPage';
 
-  return (
-    <>
-      {snowflakes.map(s => (
-        <div key={s.id} className="snowflake" style={{
-          left: s.left,
-          width: s.size,
-          height: s.size,
-          opacity: s.opacity,
-          animationDuration: s.duration,
-          animationDelay: s.delay
-        }} />
-      ))}
-    </>
-  );
-};
+import { GiftsPage } from './pages/GiftsPage';
+
+
+
+interface ErrorBoundaryProps {
+  children: ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error("Uncaught error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-[#0B0F19] flex flex-col items-center justify-center text-white p-8">
+          <h1 className="text-2xl font-bold text-red-500 mb-4">Сталася помилка</h1>
+          <pre className="bg-slate-900 p-4 rounded-xl text-sm overflow-auto max-w-full">
+            {this.state.error?.message}
+          </pre>
+          <button 
+            onClick={() => window.location.reload()}
+            className="mt-6 px-6 py-2 bg-blue-600 rounded-xl font-bold"
+          >
+            Оновити сторінку
+          </button>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+import { LanguageProvider } from './contexts/LanguageContext';
+import { CallProvider } from './contexts/CallContext';
+import { CallScreen } from './components/CallScreen';
+
+import { AccountFrozenBanner } from './components/AccountFrozenBanner';
+import { Mascot } from './components/Mascot';
 
 const App: React.FC = () => {
-  const [theme, setTheme] = useState<Theme>('dark');
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [markedAirfields, setMarkedAirfields] = useState<Set<string>>(new Set());
-  const [ballisticDir, setBallisticDir] = useState<BallisticDirection>('None');
-  const [briefing, setBriefing] = useState<string>("Синхронізація...");
+  const [theme, setTheme] = useState<Theme>(() => {
+    const savedTheme = localStorage.getItem('theme') as Theme;
+    if (savedTheme) return savedTheme;
+    if (window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
+    return 'dark';
+  });
+
+  const [brightness, setBrightness] = useState(() => {
+    const saved = localStorage.getItem('appBrightness');
+    return saved !== null ? parseFloat(saved) : 1;
+  });
+
+  const [navPosition, setNavPosition] = useState<'top' | 'bottom'>(() => {
+    return (localStorage.getItem('navPosition') as 'top' | 'bottom') || 'bottom';
+  });
+
+  const [captchaVerified, setCaptchaVerified] = useState(() => {
+    return sessionStorage.getItem('captchaVerified') === 'true';
+  });
 
   useEffect(() => {
-    const updateBrief = async () => {
-      const active = AIRFIELDS.filter(a => markedAirfields.has(a.id)).map(a => a.name);
-      if (ballisticDir !== 'None') active.push(`Балістика з напрямку: ${ballisticDir}`);
-      const text = await getTacticalBriefing(active);
-      setBriefing(text);
+    localStorage.setItem('navPosition', navPosition);
+  }, [navPosition]);
+
+  useEffect(() => {
+    localStorage.setItem('appBrightness', brightness.toString());
+  }, [brightness]);
+  const [user, setUser] = useState<any>(null);
+  const [isGuest, setIsGuest] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [canManageThreats, setCanManageThreats] = useState(false);
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [appLockPassed, setAppLockPassed] = useState(false);
+
+  const exitAdminMode = useCallback(() => {
+    setIsAdmin(false);
+    setCanManageThreats(false);
+    localStorage.removeItem('adminToken');
+    localStorage.removeItem('adminData');
+    localStorage.setItem('adminExited', 'true');
+  }, []);
+
+  useEffect(() => {
+    let unsubscribeDoc: () => void;
+    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
+      if (currentUser) {
+        try {
+          const userRef = doc(db, 'users', currentUser.uid);
+          unsubscribeDoc = onSnapshot(userRef, async (userDoc) => {
+            const hasExited = localStorage.getItem('adminExited') === 'true';
+            const role = userDoc.exists() ? userDoc.data().role : 'user';
+            const isRealAdmin = !hasExited && (role === 'admin' || currentUser.email === 'olegkucher2311@gmail.com');
+            const canManage = !hasExited && (role === 'admin' || role === 'moder' || currentUser.email === 'olegkucher2311@gmail.com');
+            const blockedSections = userDoc.exists() ? userDoc.data().blockedSections || [] : [];
+            const description = userDoc.exists() ? userDoc.data().description || '' : '';
+            const isPermanentlyBlocked = userDoc.exists() ? userDoc.data().isPermanentlyBlocked : false;
+            const isFrozen = userDoc.exists() ? userDoc.data().isFrozen : false;
+            const freezeReason = userDoc.exists() ? userDoc.data().freezeReason : '';
+            const frozenFeatures = userDoc.exists() ? userDoc.data().frozenFeatures || [] : [];
+  
+            const impersonatedId = localStorage.getItem('impersonatedUserId');
+            if (isRealAdmin && impersonatedId) {
+              const impDoc = await getDoc(doc(db, 'users', impersonatedId));
+              if (impDoc.exists()) {
+                const impData = impDoc.data();
+                setUser({
+                  uid: impersonatedId,
+                  email: impData.email,
+                  displayName: impData.displayName,
+                  photoURL: impData.photoURL,
+                  isImpersonated: true,
+                  realUid: currentUser.uid,
+                  role: impData.role,
+                  blockedSections: impData.blockedSections || [],
+                  description: impData.description || '',
+                  isPermanentlyBlocked: impData.isPermanentlyBlocked || false,
+                  isFrozen: impData.isFrozen || false,
+                  freezeReason: impData.freezeReason || '',
+                  frozenFeatures: impData.frozenFeatures || []
+                });
+                setIsAdmin(false); // Impersonated user is not admin
+                setCanManageThreats(false);
+              } else {
+                setUser({ ...currentUser, role, blockedSections, description, isPermanentlyBlocked, isFrozen, freezeReason, frozenFeatures });
+                setIsAdmin(isRealAdmin);
+                setCanManageThreats(canManage);
+              }
+            } else {
+              setUser({ ...currentUser, role, blockedSections, description, isPermanentlyBlocked, isFrozen, freezeReason, frozenFeatures });
+              setIsAdmin(isRealAdmin);
+              setCanManageThreats(canManage);
+            }
+            setIsAuthReady(true);
+          });
+        } catch (error) {
+          console.error("Error checking admin status", error);
+          setUser(currentUser);
+          setIsAdmin(false);
+          setCanManageThreats(false);
+          setIsAuthReady(true);
+        }
+      } else {
+        if (unsubscribeDoc) unsubscribeDoc();
+        setUser(null);
+        setIsAdmin(false);
+        setCanManageThreats(false);
+        localStorage.removeItem('adminExited');
+        localStorage.removeItem('impersonatedUserId');
+        sessionStorage.removeItem('captchaVerified');
+        setCaptchaVerified(false);
+        setIsAuthReady(true);
+      }
+    });
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeDoc) unsubscribeDoc();
     };
-    updateBrief();
-  }, [markedAirfields, ballisticDir]);
+  }, []);
 
   const toggleTheme = () => {
-    const newTheme = theme === 'dark' ? 'light' : 'dark';
-    setTheme(newTheme);
-    document.documentElement.classList.toggle('dark', newTheme === 'dark');
+    setTheme(prev => prev === 'dark' ? 'light' : 'dark');
   };
 
-  const handleAdminAuth = () => {
-    if (isAdmin) {
-      setIsAdmin(false);
+  useEffect(() => {
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+      localStorage.setItem('theme', 'dark');
     } else {
-      const pass = prompt("Введіть пароль адміна:");
-      if (pass === "admin123") setIsAdmin(true);
-      else alert("Невірний пароль!");
+      document.documentElement.classList.remove('dark');
+      localStorage.setItem('theme', 'light');
     }
-  };
+  }, [theme]);
 
-  const directions: { label: string, value: BallisticDirection }[] = [
-    { label: 'Північ', value: 'North' },
-    { label: 'Схід', value: 'East' },
-    { label: 'Південь', value: 'South' },
-    { label: 'Захід', value: 'West' }
-  ];
+  useEffect(() => {
+    if (!user) return;
+
+    const userStatusRef = doc(db, 'presence', user.uid);
+
+    const setOnlineStatus = async () => {
+      try {
+        await setDoc(userStatusRef, {
+          state: 'online',
+          lastChanged: serverTimestamp(),
+        });
+      } catch (error) {
+        console.error("Error setting presence:", error);
+      }
+    };
+
+    setOnlineStatus();
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        setDoc(userStatusRef, {
+          state: 'offline',
+          lastChanged: serverTimestamp(),
+        }).catch(console.error);
+      } else {
+        setOnlineStatus();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('beforeunload', () => {
+      setDoc(userStatusRef, {
+        state: 'offline',
+        lastChanged: serverTimestamp(),
+      }).catch(console.error);
+    });
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [user]);
+
+  const [securityConfig, setSecurityConfig] = useState<{ captchaEnabled: boolean, isSiteBlocked?: boolean } | null>(null);
+
+  useEffect(() => {
+    const settingsRef = doc(db, 'systemSettings', 'config');
+    const unsubscribeConfig = onSnapshot(settingsRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.forceReload) {
+          const lastReload = localStorage.getItem('lastReload');
+          if (lastReload !== data.forceReload.toString()) {
+            localStorage.setItem('lastReload', data.forceReload.toString());
+            window.location.reload();
+          }
+        }
+      }
+    });
+
+    const securityRef = doc(db, 'settings', 'security');
+    const unsubscribeSecurity = onSnapshot(securityRef, (docSnap) => {
+      if (docSnap.exists()) {
+        setSecurityConfig(docSnap.data() as { captchaEnabled: boolean, isSiteBlocked?: boolean });
+      } else {
+        setSecurityConfig({ captchaEnabled: true, isSiteBlocked: false }); // Default
+      }
+    });
+
+    return () => {
+      unsubscribeConfig();
+      unsubscribeSecurity();
+    };
+  }, []);
+
+  const effectiveUser = user || (isGuest ? { uid: 'guest', isGuest: true, role: 'user', displayName: 'Гість' } : null);
+
+  if (!isAuthReady) {
+    return (
+      <div className="min-h-screen bg-[#0B0F19] flex flex-col items-center justify-center text-white">
+        <motion.div
+          initial={{ scale: 0.8, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{
+            duration: 1,
+            repeat: Infinity,
+            repeatType: "reverse",
+            ease: "easeInOut"
+          }}
+          className="relative"
+        >
+          <div className="absolute inset-0 bg-blue-500/30 blur-3xl rounded-full scale-150" />
+          <img src="/icon.svg" alt="App Avatar" className="w-32 h-32 relative z-10 drop-shadow-2xl rounded-3xl" />
+        </motion.div>
+        <motion.h2 
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+          className="mt-8 text-xl font-black tracking-widest uppercase text-slate-300"
+        >
+          Завантаження...
+        </motion.h2>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen pb-20 bg-slate-50 dark:bg-sky-dark transition-colors duration-500 font-sans selection:bg-blue-600 selection:text-white">
-      <Snowfall />
-      
-      {/* HEADER */}
-      <header className="sticky top-0 z-50 bg-white/80 dark:bg-sky-dark/80 backdrop-blur-xl border-b border-slate-200 dark:border-slate-800">
-        <div className="max-w-7xl mx-auto px-4 h-20 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-blue-600/20">
-              <Radar className="w-6 h-6 animate-pulse" />
-            </div>
-            <h1 className="text-xl font-black tracking-tight">SkyTrack<span className="text-blue-600">Ua</span></h1>
-          </div>
-          
-          <div className="flex items-center gap-4">
-            <KyivClock />
-            <div className="h-6 w-px bg-slate-200 dark:bg-slate-800" />
-            <button 
-              onClick={handleAdminAuth}
-              className={`p-2 rounded-xl transition-all ${isAdmin ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'}`}
-              title={isAdmin ? "Вийти з режиму адміна" : "Вхід для адміна"}
-            >
-              {isAdmin ? <Unlock className="w-5 h-5" /> : <Lock className="w-5 h-5" />}
-            </button>
-            <ThemeToggle theme={theme} onToggle={toggleTheme} />
-          </div>
-        </div>
-      </header>
-
-      <main className="max-w-7xl mx-auto px-4 pt-8 space-y-10">
-        {!isAdmin && (
-          <div className="bg-blue-600/5 border border-blue-600/20 p-4 rounded-2xl flex items-center gap-3 text-blue-600 dark:text-blue-400">
-            <Info className="w-5 h-5" />
-            <p className="text-xs font-bold uppercase tracking-widest">Ви у режимі перегляду. Тільки адмін може змінювати статус загрози.</p>
-          </div>
-        )}
-
-        {/* SECTION 3: BALLISTIC THREAT */}
-        <section className="bg-white dark:bg-sky-card p-8 rounded-[2.5rem] border border-slate-200 dark:border-slate-800 shadow-xl space-y-8">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-            <div className="space-y-1">
-              <div className="flex items-center gap-3 text-amber-500">
-                <Zap className="w-6 h-6" />
-                <h2 className="text-2xl font-black uppercase tracking-tight">Розділ 3: Напрямок Загрози</h2>
-              </div>
-              <p className="text-slate-500 font-bold text-sm">Виберіть сектор для сповіщення про балістику.</p>
-            </div>
-
-            <div className={`flex items-center gap-4 px-8 py-5 rounded-2xl font-black text-sm transition-all duration-500
-              ${ballisticDir !== 'None' ? 'bg-shahed-red text-white animate-pulse-red scale-105' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'}`}>
-              {ballisticDir !== 'None' ? (
-                <>
-                  <AlertTriangle className="w-6 h-6 animate-bounce" />
-                  ⚠️ ЗАГРОЗА ЗАСТОСУВАННЯ БАЛІСТИЧНОГО ОЗБРОЄННЯ!
-                </>
-              ) : (
-                "СТАТУС: СПОКІЙНО"
-              )}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {directions.map(dir => (
-              <button
-                key={dir.value}
-                disabled={!isAdmin}
-                onClick={() => setBallisticDir(ballisticDir === dir.value ? 'None' : dir.value)}
-                className={`p-5 rounded-2xl border-2 font-black uppercase tracking-widest text-[10px] transition-all
-                  ${ballisticDir === dir.value 
-                    ? 'border-shahed-red bg-shahed-red text-white shadow-lg' 
-                    : 'border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-slate-500'
-                  }
-                  ${isAdmin ? 'hover:border-blue-500 active:scale-95' : 'cursor-not-allowed opacity-50'}`}
-              >
-                Напрямок: {dir.label}
-              </button>
-            ))}
-          </div>
-        </section>
-
-        {/* AIRFIELDS SECTION */}
-        <section className="space-y-6">
-          <div className="flex items-center justify-between border-l-4 border-blue-600 pl-4">
-            <div>
-              <h2 className="text-3xl font-black uppercase tracking-tight">Майданчики Пуску</h2>
-              <p className="text-slate-500 font-bold text-sm">Моніторинг активності на аеродромах РФ та Криму.</p>
-            </div>
-            {isAdmin && markedAirfields.size > 0 && (
-              <button onClick={() => setMarkedAirfields(new Set())} className="text-xs font-black uppercase text-shahed-red hover:underline flex items-center gap-2">
-                <Trash2 className="w-4 h-4" /> Скинути все
-              </button>
-            )}
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {AIRFIELDS.map(airfield => (
-              <AirfieldCard 
-                key={airfield.id}
-                airfield={airfield}
-                isAdmin={isAdmin}
-                isMarked={markedAirfields.has(airfield.id)}
-                onToggle={(id) => {
-                  const next = new Set(markedAirfields);
-                  if (next.has(id)) next.delete(id); else next.add(id);
-                  setMarkedAirfields(next);
+    <ErrorBoundary>
+      <LanguageProvider>
+        <CallProvider>
+          <CallScreen />
+          <BrowserRouter>
+            <div className="h-[100dvh] w-full flex flex-col">
+            <Mascot />
+            <UpdateNotifier />
+            {effectiveUser?.isFrozen && <AccountFrozenBanner user={effectiveUser} />}
+            {effectiveUser?.isImpersonated && (
+              <div className="fixed bottom-20 right-4 z-50">
+              <button 
+                onClick={() => {
+                  localStorage.removeItem('impersonatedUserId');
+                  window.location.reload();
                 }}
-              />
-            ))}
-          </div>
-        </section>
-
-        {/* AI BRIEFING */}
-        <section className="bg-blue-600 text-white p-8 rounded-[2.5rem] shadow-2xl relative overflow-hidden group">
-          <div className="relative z-10 space-y-4">
-            <div className="flex items-center gap-2 text-blue-100 font-black uppercase text-[10px] tracking-[0.2em]">
-              <Database className="w-4 h-4" /> AI OSINT Briefing
+                className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-full font-bold shadow-lg flex items-center gap-2 transition-colors"
+              >
+                <AlertTriangle className="w-4 h-4" />
+                Припинити керування {effectiveUser.email}
+              </button>
             </div>
-            <p className="text-xl md:text-2xl font-bold leading-tight italic">"{briefing}"</p>
+          )}
+          {effectiveUser?.isPermanentlyBlocked ? (
+             <div className="min-h-screen bg-black flex flex-col items-center justify-center relative p-8 text-center" style={{ background: 'radial-gradient(circle at center, #3f0914 0%, #000000 100%)' }}>
+                 <h1 className="text-2xl font-bold text-white mb-4 uppercase tracking-wider text-red-500">Доступ заблоковано</h1>
+                 <p className="text-sm text-gray-300 mb-8 max-w-sm leading-relaxed">
+                     Ваш акаунт було заблоковано назавжди через постійні спроби введення неправильного пароля.
+                 </p>
+                 <button onClick={() => { auth.signOut(); setIsGuest(false); }} className="text-white font-semibold underline opacity-70 hover:opacity-100 transition-opacity">Вийти з акаунта</button>
+             </div>
+          ) : effectiveUser && !isAdmin && securityConfig?.isSiteBlocked ? (
+            <SunsetScreen config={securityConfig} onSignOut={() => setIsGuest(false)} />
+          ) : effectiveUser ? (
+            (securityConfig?.captchaEnabled !== false && !captchaVerified) ? (
+              <CaptchaScreen onVerify={() => {
+                sessionStorage.setItem('captchaVerified', 'true');
+                setCaptchaVerified(true);
+              }} />
+            ) : !appLockPassed ? (
+              <AuthLockScreen onUnlock={() => setAppLockPassed(true)} />
+            ) : (
+              <>
+                <Routes>
+                  <Route path="/" element={<Layout theme={theme} toggleTheme={toggleTheme} isAdmin={isAdmin} brightness={brightness} navPosition={navPosition} />}>
+                    <Route index element={<SectionBlocker user={effectiveUser}><Dashboard isAdmin={canManageThreats} user={effectiveUser} /></SectionBlocker>} />
+                  <Route path="community" element={<SectionBlocker user={effectiveUser}><Community isAdmin={isAdmin} /></SectionBlocker>} />
+                  <Route path="channel/:channelId" element={<SectionBlocker user={effectiveUser}><ChannelView isAdmin={isAdmin} /></SectionBlocker>} />
+                  <Route path="qa" element={<SectionBlocker user={effectiveUser}><AIPage isAdmin={isAdmin} /></SectionBlocker>} />
+                  <Route path="search" element={<SectionBlocker user={effectiveUser}><Search isAdmin={isAdmin} /></SectionBlocker>} />
+                  <Route path="store" element={<SectionBlocker user={effectiveUser}><StorePage isAdmin={isAdmin} /></SectionBlocker>} />
+                  <Route path="event" element={<SectionBlocker user={effectiveUser}><Event isAdmin={isAdmin} /></SectionBlocker>} />
+                  <Route path="gifts" element={<SectionBlocker user={effectiveUser}><GiftsPage isAdmin={isAdmin} /></SectionBlocker>} />
+                  <Route path="notifications" element={<SectionBlocker user={effectiveUser}><Notifications isAdmin={isAdmin} /></SectionBlocker>} />
+                  <Route path="settings" element={<SectionBlocker user={effectiveUser}><Settings theme={theme} setTheme={setTheme} brightness={brightness} setBrightness={setBrightness} navPosition={navPosition} setNavPosition={setNavPosition} exitAdminMode={exitAdminMode} isAdmin={isAdmin} /></SectionBlocker>} />
+                  <Route path="admin" element={isAdmin ? <AdminPanel /> : <Navigate to="/" replace />} />
+                  <Route path="profile" element={<SectionBlocker user={effectiveUser}><Profile isAdmin={isAdmin} user={effectiveUser} /></SectionBlocker>} />
+                  <Route path="profile/:userId" element={<SectionBlocker user={effectiveUser}><Profile isAdmin={isAdmin} user={effectiveUser} /></SectionBlocker>} />
+                  <Route path="chat/:userId" element={<SectionBlocker user={effectiveUser}><Chat /></SectionBlocker>} />
+                  <Route path="*" element={<Navigate to="/" replace />} />
+                </Route>
+              </Routes>
+              </>
+            )
+          ) : (
+            <Routes>
+              <Route path="/" element={<AuthPage onGuestLogin={() => setIsGuest(true)} securityConfig={securityConfig} />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          )}
           </div>
-          <Radar className="absolute -right-10 -bottom-10 w-64 h-64 text-white/5 group-hover:rotate-12 transition-transform duration-1000" />
-        </section>
-      </main>
-
-      <footer className="mt-20 py-10 border-t border-slate-200 dark:border-slate-800 text-center opacity-50">
-        <p className="text-[10px] font-black uppercase tracking-[0.5em]">SkyTrackUa © 2025 • Slava Ukraini</p>
-      </footer>
-    </div>
+        </BrowserRouter>
+        </CallProvider>
+      </LanguageProvider>
+    </ErrorBoundary>
   );
 };
 
